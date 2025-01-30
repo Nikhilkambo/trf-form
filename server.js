@@ -15,10 +15,10 @@ app.use(express.static("public"));
 
 // Create uploads directory if it doesn't exist
 const uploadsDir = path.join(__dirname, "uploads");
-fs.chmodSync(uploadsDir, 0o777);
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir);
 }
+fs.chmodSync(uploadsDir, 0o777);
 
 app.post("/generate-pdf", async (req, res) => {
   try {
