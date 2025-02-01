@@ -15,6 +15,9 @@ app.use(express.static("public"));
 
 // Create uploads directory if it doesn't exist
 const uploadsDir = path.join(__dirname, "uploads");
+const logoPath = path.join(__dirname,'public', "cytonomics.png");
+const base64Logo = fs.readFileSync(logoPath, "base64");
+const logo = `data:image/png;base64,${base64Logo}`;
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir);
 }
@@ -211,18 +214,16 @@ app.post("/generate-pdf", async (req, res) => {
                     <tr>
                         <td height="20" align="left" valign="center">
                             <a href="#">
-                                <img src="https://cytonomics.com/wp-content/uploads/2024/11/logo.png" alt="logo" width="300" />
+                                <img src="${logo}" alt="logo" width="400" />
                             </a>    
+                        </td>
+                        <td height="20" align="right" valign="center" style="text-transform: uppercase;color: #684287;font-size: 28px;font-weight: 700;">
+                            TEST REQUISITION FORM    
                         </td>
                     </tr>
                     <tr>
                         <td height="20" colspan="2" align="right">
                             &nbsp;
-                        </td>
-                    </tr>
-                    <tr>
-                        <td colspan="2" height="20" align="center" valign="center" style="text-transform: uppercase;color: #684287;font-size: 28px;font-weight: 700;">
-                            TEST REQUISITION FORM   
                         </td>
                     </tr>
                     <tr>
@@ -1310,8 +1311,8 @@ presence of consanguinity, family history and relevant investigations performed.
                     </tr>
                     <tr>
                         <td colspan="2" align="left" valign="center" style="color: #404041;font-size: 14px;font-weight: 500;">
-                            I, <input type="text" style="width: 50%; border: none;border-bottom: 1px solid #000; " value=${safeFormData.texts?.col2PatientName || ''}> age  <input type="text" style="width: 20%; border: none;border-bottom: 1px solid #000; " value=${safeFormData.texts?.col2PatientAge || ''} yrs, wife/daughter of
-    <input type="text" style="width: 50%; border: none;border-bottom: 1px solid #000; background-color: rgb(240, 241, 241);" value=${safeFormData.texts?.col2PatientWife || ''}>    residing at (address)   <input type="text" style="width: 50%; border: none;border-bottom: 1px solid #000;" value=${safeFormData.texts?.col2PatientAddress || ''}>,  hereby state that I have been explained fully the probable
+                            I, <input type="text" style="width: 50%; border: none;border-bottom: 1px solid #000; " value="${safeFormData.texts?.col2PatientName || ''}"> age  <input type="text" style="width: 20%; border: none;border-bottom: 1px solid #000;" value="${safeFormData.texts?.col2PatientAge || ''}">  yrs, wife/daughter of
+    <input type="text" style="width: 50%; border: none;border-bottom: 1px solid #000;" value="${safeFormData.texts?.col2PatientWife || ''}">    residing at (address)   <input type="text" style="width: 50%; border: none;border-bottom: 1px solid #000;" value="${safeFormData.texts?.col2PatientAddress || ''}">,  hereby state that I have been explained fully the probable
 side eects and after-eects of the prenatal diagnostic procedures. I wish to undergo the
 pre-natal diagnostic procedures in my interest, to nd out the possibility and abnormality
 (i.e. deformity/deformity/disorder) in the child, I am carrying.
