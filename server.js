@@ -6,6 +6,8 @@ const path = require("path");
 const fs = require("fs");
 const axios = require('axios');
 const FormData = require('form-data');
+const https = require('https');
+const twilio = require('twilio');
 require('dotenv').config();
 
 
@@ -22,6 +24,42 @@ const logoPath = path.join(__dirname,'public', "cytonomics.png");
 const base64Logo = fs.readFileSync(logoPath, "base64")
 const logo = `data:image/png;base64,${base64Logo}`;
 
+
+const twilioClient = twilio(
+    process.env.TWILIO_ACCOUNT_SID,
+    process.env.TWILIO_AUTH_TOKEN
+);
+async function sendSMSWithTwilio(phoneNumber, message) {
+    try {
+        // Format phone number (ensure it starts with +)
+        if (!phoneNumber.startsWith('+')) {
+            phoneNumber = '+91' + phoneNumber.replace(/[\s\-\(\)]/g, ''); // Add India country code
+        }
+          console.log('Attempting to send SMS:', {
+            to: phoneNumber,
+            from: process.env.TWILIO_PHONE_NUMBER,
+            messageLength: message.length
+        });
+
+
+        const response = await twilioClient.messages.create({
+            body: message,
+            from: process.env.TWILIO_PHONE_NUMBER,
+            to: phoneNumber
+        });
+
+        console.log('SMS sent successfully:', response.sid);
+        return response;
+
+    } catch (error) {
+        console.error('Error sending SMS:', {
+            message: error.message,
+            code: error.code,
+            status: error.status
+        });
+        throw error;
+    }
+}
 
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir);
@@ -1766,7 +1804,34 @@ of Genetic Clinic / Institute [Seal]
     await browser.close();
     
     try {
-     await uploadToWorkDrive(pdfBuffer, fileName);
+   const pdfResponse = await uploadToWorkDrive(pdfBuffer, fileName);
+   console.log('pdfResponse',pdfResponse.data.attributes);
+   if (formData.numbers?.patientNumber) {
+    try {
+        const patientMessage = `Dear ${formData.fullName},\nYour test requisition form has been received.`;
+        
+        await sendSMSWithTwilio(
+            formData.numbers.patientNumber,
+            patientMessage
+        );
+    } catch (smsError) {
+        console.error('Failed to send SMS to patient but continuing:', smsError);
+    }
+}
+
+// Send SMS to clinician if their number exists
+if (formData.numbers?.referringClinicianNumber) {
+    try {
+        const clinicianMessage = `Dear Dr. ${formData.clinicianName},`;
+        
+        await sendSMSWithTwilio(
+            formData.numbers.referringClinicianNumber,
+            clinicianMessage
+        );
+    } catch (smsError) {
+        console.error('Failed to send SMS to clinician but continuing:', smsError);
+    }
+}
     res.download(filePath, fileName, (err) => {
       if (err) {
         console.error("Error downloading file:", err);
