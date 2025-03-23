@@ -1287,6 +1287,8 @@ text.forEach(text => {
             
             window.URL.revokeObjectURL(url);
             document.body.removeChild(a);
+             // Show success message
+        alert('Form submitted successfully and PDF generated!');
             
         } catch (error) {
             console.error('Error:', error);

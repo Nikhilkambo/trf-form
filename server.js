@@ -4,38 +4,263 @@ const puppeteer = require("puppeteer");
 const cors = require("cors");
 const path = require("path");
 const fs = require("fs");
+const axios = require('axios');
+const FormData = require('form-data');
+require('dotenv').config();
+
 
 const app = express();
 
-// Middleware
+
 app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(express.static("public"));
 
-// Create uploads directory if it doesn't exist
 const uploadsDir = path.join(__dirname, "uploads");
 const logoPath = path.join(__dirname,'public', "cytonomics.png");
-const base64Logo = fs.readFileSync(logoPath, "base64");
+const base64Logo = fs.readFileSync(logoPath, "base64")
 const logo = `data:image/png;base64,${base64Logo}`;
+
+
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir);
 }
 fs.chmodSync(uploadsDir, 0o777);
+const ZOHO_WORKDRIVE_API = 'https://www.zohoapis.in/workdrive/api/v1';
+app.get('/auth', (req, res) => {
+    const authURL = `https://accounts.zoho.in/oauth/v2/auth?scope=WorkDrive.files.ALL&client_id=${process.env.ZOHO_CLIENT_ID}&response_type=code&access_type=offline&redirect_uri=${process.env.ZOHO_REDIRECT_URI}&state=register`;
+    console.log('Redirecting to:', authURL); 
+    res.redirect(authURL);
+});
+app.get('/admin/auth', (req, res) => {
+    const authURL = `https://accounts.zoho.in/oauth/v2/auth?scope=WorkDrive.files.ALL&client_id=${process.env.ZOHO_CLIENT_ID}&response_type=code&access_type=offline&prompt=consent&redirect_uri=${process.env.ZOHO_REDIRECT_URI}`;
+    res.redirect(authURL);
+});
+app.get('/oauth/callback', async (req, res) => {
+    const { code } = req.query;
+    
+    console.log('Callback received with query params:', req.query);
+
+    if (!code) {
+        console.error('No code received');
+        return res.status(400).send('No authorization code received');
+    }
+
+    try {
+        console.log('Making token request with:', {
+            code,
+            client_id: process.env.ZOHO_CLIENT_ID,
+            client_secret: process.env.ZOHO_CLIENT_SECRET,
+            redirect_uri: process.env.ZOHO_REDIRECT_URI
+        });
+        
+        const tokenResponse = `https://accounts.zoho.in/oauth/v2/token?code=${code}&client_secret=${process.env.ZOHO_CLIENT_SECRET}&redirect_uri=${process.env.ZOHO_REDIRECT_URI}&grant_type=authorization_code&client_id=${process.env.ZOHO_CLIENT_ID}`
+          
+        console.log('Token URL:', tokenResponse);
+
+        // Make the request
+        const response = await axios.post(tokenResponse);
+
+        console.log('Token response:', response.data);
+        
+        if (!response.data.refresh_token || !response.data.access_token) {
+            console.error('Token response missing tokens:', response.data);
+            return res.status(500).send('Failed to get tokens from response');
+        }
+
+        res.send(`
+            Authorization successful!<br/>
+            Refresh Token: ${response.data.refresh_token}<br/>
+            Access Token: ${response.data.access_token}<br/>
+            <p>Please save the refresh token in your .env file.</p>
+        `);
+    } catch (error) {
+        console.error('Error getting tokens:', error.response?.data || error.message);
+        res.status(500).send(`Failed to get tokens: ${error.response?.data?.error || error.message}`);
+    }
+});
+let tokenCache = {
+    access_token: null,
+    expires_at: null
+};
+
+async function getZohoAccessToken(forceRefresh = false) {
+    try {
+        // Check if we have a valid cached token
+        if (!forceRefresh && tokenCache.access_token && tokenCache.expires_at && Date.now() < tokenCache.expires_at) {
+            return tokenCache.access_token;
+        }
+
+        // Verify we have the refresh token
+        if (!process.env.ZOHO_REFRESH_TOKEN) {
+            console.error('No refresh token found. Please authenticate first.');
+            throw new Error('No refresh token available');
+        }
+
+        console.log('Getting new access token...');
+
+        // Create params
+        const params = new URLSearchParams({
+            refresh_token: process.env.ZOHO_REFRESH_TOKEN,
+            client_id: process.env.ZOHO_CLIENT_ID,
+            client_secret: process.env.ZOHO_CLIENT_SECRET,
+            grant_type: 'refresh_token'
+        });
+
+        // Make the token request
+        const response = await axios.post(
+            'https://accounts.zoho.in/oauth/v2/token',
+            params.toString(),
+            {
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                }
+            }
+        );
+
+        console.log('Token response:', {
+            success: true,
+            expires_in: response.data.expires_in
+        });
+
+        // Cache the new token
+        tokenCache.access_token = response.data.access_token;
+        tokenCache.expires_at = Date.now() + ((response.data.expires_in - 300) * 1000); // Subtract 5 minutes for safety
+
+        return tokenCache.access_token;
+
+    } catch (error) {
+        console.error('Token refresh error:', {
+            message: error.message,
+            response: error.response?.data,
+            status: error.response?.status
+        });
+
+        // Clear token cache on error
+        tokenCache.access_token = null;
+        tokenCache.expires_at = null;
+
+        throw new Error(`Failed to get access token: ${error.message}`);
+    }
+}
+
+app.get('/test-zoho', async (req, res) => {
+    try {
+        const testData = {
+            name: "Test User"
+        };
+        
+        console.log('Testing with:', testData);
+        const result = await submitToZohoForms(testData);
+        res.json(result);
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message,
+            details: error.response?.data
+        });
+    }
+});
+async function uploadToWorkDrive(pdfBuffer, fileName) {
+    try {
+         const accessToken = await getZohoAccessToken();
+        const formData = new FormData();
+        const fileStream = fs.createReadStream(uploadsDir + "/" + fileName);
+
+        formData.append('content', fileStream, {
+            filename: fileName,
+            contentType: 'application/pdf'
+        });
+        
+        formData.append('parent_id', process.env.ZOHO_WORKDRIVE_FOLDER_ID);
+
+        console.log('Uploading file to WorkDrive:', {
+            fileName,
+            folderId: process.env.ZOHO_WORKDRIVE_FOLDER_ID
+        });
+        const response = await axios.post(
+            `${ZOHO_WORKDRIVE_API}/upload`, 
+            formData,
+            {
+                headers: {
+                    'Authorization': `Zoho-oauthtoken ${accessToken}`,
+                    ...formData.getHeaders(),
+                },
+                maxContentLength: Infinity,
+                maxBodyLength: Infinity
+            }
+        );
+
+        console.log('Upload response:', response.data);
+        return response.data;
+    } catch (error) {
+        console.error('Upload error details:', {
+            message: error.message,
+            response: error.response?.data,
+            errors: error.response?.data?.errors,
+            status: error.response?.status,
+            headers: error.config?.headers,
+            requestData: {
+                fileName,
+                folderId: process.env.ZOHO_WORKDRIVE_FOLDER_ID,
+                contentLength: pdfBuffer?.length
+            }
+        });
+        throw error;
+    }
+}
+async function submitToZohoForms(formData) {
+    try {
+        const params = new URLSearchParams();
+        
+        params.append('Name', formData.name || '');
+        
+        params.append('zf_referrer_name', 'https://forms.zohopublic.in');
+        params.append('zf_redirect', 'false');
+        params.append('zf_submitType', 'submit');
+        params.append('zf_current_url', 'https://forms.zohopublic.in');
+        params.append('zf_verify', 'false');
+        params.append('zf_rszfm', '1');
+        params.append('zf_form_id', '169131000000057033'); 
+
+        console.log('Submitting data:', Object.fromEntries(params));
+
+        const response = await axios({
+            method: 'POST',
+            url: 'https://forms.zohopublic.in/cytonomics/form/trf/formperma/NgsC0UajN151zsudoqxya1X_BpNBahQ2pOy9D3ZtrY8/htmlRecords/submit',
+            data: params,
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Accept': '*/*',
+                'Origin': 'https://forms.zohopublic.in',
+                'Referer': 'https://forms.zohopublic.in/cytonomics/form/trf/formperma/NgsC0UajN151zsudoqxya1X_BpNBahQ2pOy9D3ZtrY8?zf_rszfm=1',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            }
+        });
+
+        console.log('Response:', response.data);
+        return { success: true, data: response.data };
+    } catch (error) {
+        console.error('Submission error:', {
+            message: error.message,
+            response: error.response?.data
+        });
+        throw error;
+    }
+}
 
 app.post("/generate-pdf", async (req, res) => {
-  try {
+ 
     const formData = req.body;
     console.log(formData);
 
-    // Launch browser
     const browser = await puppeteer.launch({
       headless: "new",
       args: ["--no-sandbox", "--disable-setuid-sandbox"],
     });
 
     const page = await browser.newPage();
-    // Ensure formData has all required properties with default empty strings
     const safeFormData = {
         fullName: (formData.fullName || '').padEnd(40, ' '), 
     day: (formData.dob?.day || '').padEnd(2, ' '),
@@ -83,7 +308,6 @@ app.post("/generate-pdf", async (req, res) => {
         clinicalDetailsPedigree: (formData.texts?.clinicalDetailsPedigree || '').padEnd(33, ' '),
     },
     checkboxes: {
-        // Add all the checkbox fields with proper checked state
         checkboxM: formData.checkboxes?.checkboxM === "on" ? "checked" : "",
         checkboxF: formData.checkboxes?.checkboxF === "on" ? "checked" : "",
         checkboxWholeBlood: formData.checkboxes?.checkboxWholeBlood === "on" ? "checked" : "",
@@ -117,8 +341,8 @@ app.post("/generate-pdf", async (req, res) => {
         mlpaOthers: formData.checkboxes?.mlpaOthers === "on" ? "checked" : "",
         friedreichsAtaxia: formData.checkboxes?.friedreichsAtaxia === "on" ? "checked" : "",
         tripleRepeatDisordersFshd: formData.checkboxes?.tripleRepeatDisordersFshd === "on" ? "checked" : "",
-        
-        
+    
+    
        
         
 
@@ -1521,13 +1745,13 @@ of Genetic Clinic / Institute [Seal]
         `;
 
     await page.setContent(htmlContent);
+    // let zohoResult= await submitToZohoForms(htmlContent);
+    // console.log('zohoResult',zohoResult);
 
-    // Generate PDF file name
-    const fileName = `test_requisition_${Date.now()}.pdf`;
+    const fileName = `${(safeFormData.fullName || '').replace(/\s+/g, '_')}_test_requisition_${Date.now()}.pdf`;
     const filePath = path.join(uploadsDir, fileName);
 
-    // Generate PDF
-    await page.pdf({
+    const pdfBuffer =await page.pdf({
       path: filePath,
       format: "A4",
       printBackground: true,
@@ -1540,8 +1764,9 @@ of Genetic Clinic / Institute [Seal]
     });
 
     await browser.close();
-
-    // Send file
+    
+    try {
+     await uploadToWorkDrive(pdfBuffer, fileName);
     res.download(filePath, fileName, (err) => {
       if (err) {
         console.error("Error downloading file:", err);
