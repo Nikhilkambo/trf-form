@@ -6,7 +6,6 @@ const path = require("path");
 const fs = require("fs");
 const axios = require('axios');
 const FormData = require('form-data');
-const https = require('https');
 const twilio = require('twilio');
 require('dotenv').config();
 
@@ -1808,7 +1807,7 @@ of Genetic Clinic / Institute [Seal]
    console.log('pdfResponse',pdfResponse.data.attributes);
    if (formData.numbers?.patientNumber) {
     try {
-        const patientMessage = `Dear ${formData.fullName},\nYour test requisition form has been received.`;
+        const patientMessage = `Hi ${formData.fullName}, This is an acknowledgment of Test Requisition Request raised on your behalf by Dr. ${formData.clinicianName}`;
         
         await sendSMSWithTwilio(
             formData.numbers.patientNumber,
@@ -1822,7 +1821,7 @@ of Genetic Clinic / Institute [Seal]
 // Send SMS to clinician if their number exists
 if (formData.numbers?.referringClinicianNumber) {
     try {
-        const clinicianMessage = `Dear Dr. ${formData.clinicianName},`;
+        const clinicianMessage = `Hi Dr. ${formData.clinicianName}, This is an acknowledgment of Test Requisition Request raised on your behalf by ${formData.fullName}`;
         
         await sendSMSWithTwilio(
             formData.numbers.referringClinicianNumber,
